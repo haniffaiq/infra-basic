@@ -1,0 +1,113 @@
+name: infa-basic
+
+# This project owns the `shared-infra` network. App repos join it with:
+#   networks:
+#     shared-infra:
+#       external: true
+networks:
+  default:
+    name: shared-infra
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: postgres
+      PETAG_DB_PASSWORD: ${PETAG_DB_PASSWORD:?set in .env}
+      JBC_DB_PASSWORD: ${JBC_DB_PASSWORD:?set in .env}
+      PHOTOBOXTYB_DB_PASSWORD: ${PHOTOBOXTYB_DB_PASSWORD:?set in .env}
+      POSTYB_DB_PASSWORD: ${POSTYB_DB_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set in .env}
+      PETAG_REDIS_PASSWORD: ${PETAG_REDIS_PASSWORD:?set in .env}
+      JBC_REDIS_PASSWORD: ${JBC_REDIS_PASSWORD:?set in .env}
+      PHOTOBOXTYB_REDIS_PASSWORD: ${PHOTOBOXTYB_REDIS_PASSWORD:?set in .env}
+      POSTYB_REDIS_PASSWORD: ${POSTYB_REDIS_PASSWORD:?set in .env}
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    volumes:
+      - redisdata:/data
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
+      - ./redis/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in .env}
+    command: server /data --console-address ":9001"
+    volumes:
+      - miniodata:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  minio-provisioner:
+    image: minio/mc
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      PETAG_MINIO_ACCESS_KEY: ${PETAG_MINIO_ACCESS_KEY:?set in .env}
+      PETAG_MINIO_SECRET_KEY: ${PETAG_MINIO_SECRET_KEY:?set in .env}
+      JBC_MINIO_ACCESS_KEY: ${JBC_MINIO_ACCESS_KEY:?set in .env}
+      JBC_MINIO_SECRET_KEY: ${JBC_MINIO_SECRET_KEY:?set in .env}
+      PHOTOBOXTYB_MINIO_ACCESS_KEY: ${PHOTOBOXTYB_MINIO_ACCESS_KEY:?set in .env}
+      PHOTOBOXTYB_MINIO_SECRET_KEY: ${PHOTOBOXTYB_MINIO_SECRET_KEY:?set in .env}
+      POSTYB_MINIO_ACCESS_KEY: ${POSTYB_MINIO_ACCESS_KEY:?set in .env}
+      POSTYB_MINIO_SECRET_KEY: ${POSTYB_MINIO_SECRET_KEY:?set in .env}
+    entrypoint: ["/bin/sh", "/provision.sh"]
+    volumes:
+      - ./minio/provision.sh:/provision.sh:ro
+
+  backup:
+    build: ./backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+    volumes:
+      - ./backups:/backups
