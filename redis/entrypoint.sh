@@ -12,7 +12,10 @@ echo "user default on >${REDIS_PASSWORD} ~* &* +@all" > "$ACL"
 add_user() {
   app="$1"
   pw="$2"
-  echo "user ${app} on >${pw} ~${app}:* &${app}:* +@all -@dangerous" >> "$ACL"
+  # +@all -@dangerous locks out destructive/admin commands; +info is added
+  # back because BullMQ (used by the apps) issues INFO on every connection.
+  # INFO is a read-only server-stats command, safe for key-scoped users.
+  echo "user ${app} on >${pw} ~${app}:* &${app}:* +@all -@dangerous +info" >> "$ACL"
   echo "redis: configured ACL user '${app}'"
 }
 
