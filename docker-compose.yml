@@ -15,7 +15,7 @@ volumes:
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: docker.io/library/postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -37,7 +37,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: docker.io/library/redis:7-alpine
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set in .env}
@@ -60,7 +60,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio
+    image: docker.io/minio/minio
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env}
@@ -73,7 +73,7 @@ services:
       - "127.0.0.1:9001:9001"
 
   minio-provisioner:
-    image: minio/mc
+    image: docker.io/minio/mc
     restart: "no"
     depends_on:
       minio:
