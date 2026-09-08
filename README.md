@@ -128,6 +128,45 @@ docker compose exec postgres psql -U postgres -c \
 `METRICS_REMOTE_WRITE_URL` at it and stop the `victoriametrics` service. The
 collector needs no other change.
 
+### Container names in logs
+
+Docker's json-file records contain only `{"log","stream","time"}`, and the
+directory holding them is named by container id. **The container name is not
+in the logs and cannot be**, short of asking the Docker API per record. Log
+records therefore carry `container_id`, not a name.
+
+The name is resolved at query time instead: `docker_stats` publishes
+`container_id` and `container_name` as metric labels, refreshed every 30s. The
+`Container Logs` dashboard uses that as a lookup — you pick a name, it filters
+logs by the matching id. The panels prefix-match on that id, so the dashboard
+works both against records already stored (12-char id) and against the
+full-length id the collector writes after `otel/collector.yaml` is redeployed.
+Import it once:
+
+```sh
+# Grafana → Dashboards → New → Import → upload the file, then pick the
+# VictoriaLogs and VictoriaMetrics datasources when prompted.
+grafana/dashboards/container-logs.json
+```
+
+Dashboards are deliberately not provisioned from git, so anything you import or
+draw stays editable and is never overwritten on restart. Their definitions live
+in the `grafana` database, which `backup.sh` dumps.
+
+### The old Prometheus is still load-bearing
+
+Grafana keeps the previous monitoring stack's Prometheus as a second
+datasource. Four migrated dashboards — Node Exporter Full, Docker Containers,
+Nginx Edge, and Domains Uptime & SSL — read from **it**, not from the
+collector, and the collector does not produce the series they need
+(`probe_*`, `nginx_*`, `node_*`, `dockerstats_*`).
+
+**Turning off the old exporters blanks those four dashboards and stops uptime
+and SSL-expiry monitoring for ~10 domains.** Do not decommission them as
+"replaced by OpenTelemetry" until either the collector is configured to scrape
+the same targets (blackbox for uptime/SSL, nginx for edge metrics) or those
+dashboards are rebuilt against collector metric names, which differ.
+
 ## Adding a 5th app later
 
 The Postgres init script and MinIO provisioner only create resources for the

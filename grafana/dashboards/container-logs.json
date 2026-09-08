@@ -784,8 +784,9 @@
     },
     {
       "type": "row",
-      "title": "Per container (expand)",
+      "title": "$container",
       "collapsed": true,
+      "repeat": "container",
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -795,21 +796,18 @@
       "panels": [
         {
           "type": "timeseries",
-          "title": "$container",
-          "description": "One chart per container selected above. Small multiples instead of a 30-series stack: each panel is a single hue, so shape is comparable across containers without a colour key.",
+          "title": "$container — log volume",
+          "description": "Lines per interval for this container alone. One repeated row per container selected above: small multiples rather than a 30-series stack, so each chart is a single hue and shapes stay comparable.",
           "datasource": {
             "type": "victoriametrics-logs-datasource",
             "uid": "PD775F2863313E6C7"
           },
           "gridPos": {
-            "h": 6,
-            "w": 6,
+            "h": 7,
+            "w": 8,
             "x": 0,
             "y": 26
           },
-          "repeat": "container",
-          "repeatDirection": "h",
-          "maxPerRow": 4,
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -821,7 +819,7 @@
                 "drawStyle": "bars",
                 "lineWidth": 0,
                 "fillOpacity": 85,
-                "axisLabel": "",
+                "axisLabel": "lines / interval",
                 "gradientMode": "none",
                 "showPoints": "never",
                 "barAlignment": 0,
@@ -854,9 +852,138 @@
                 "type": "victoriametrics-logs-datasource",
                 "uid": "PD775F2863313E6C7"
               },
-              "expr": "container_id:\"$container\" log.iostream:~\"${stream:pipe}\" ${search} | stats count() as lines",
+              "expr": "container_id:${container}* log.iostream:~\"${stream:pipe}\" ${search} | stats count() as lines",
               "queryType": "statsRange",
               "legendFormat": "lines"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "$container — CPU",
+          "description": "CPU utilisation for this container. Its own panel, not shared with memory: a 0-1 ratio and a byte count on one axis leaves whichever is smaller unreadable.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P4169E866C3094E38"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 26
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "green"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "axisLabel": "",
+                "gradientMode": "none",
+                "showPoints": "never",
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "showLegend": false
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "P4169E866C3094E38"
+              },
+              "expr": "container_cpu_utilization_ratio{container_id=~\"${container}.*\"}",
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "__auto"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "$container — memory",
+          "description": "Resident memory for this container, on its own byte-scaled axis.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P4169E866C3094E38"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 26
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "purple"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "axisLabel": "",
+                "gradientMode": "none",
+                "showPoints": "never",
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "showLegend": false
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "P4169E866C3094E38"
+              },
+              "expr": "container_memory_usage_total_bytes{container_id=~\"${container}.*\"}",
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "__auto"
             }
           ]
         }
