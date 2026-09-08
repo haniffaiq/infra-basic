@@ -17,9 +17,10 @@
 - **This repo makes no changes to nginx.** nginx runs under systemd on the host. No `stub_status`, no access-log collection, no server block managed here.
 - The pre-existing Grafana on the server is not modified and not migrated. The new Grafana binds `127.0.0.1:${GRAFANA_PORT}`, default `3001`.
 - No new port is published on a public interface. VictoriaMetrics, VictoriaLogs and Grafana bind `127.0.0.1` only; the collector and the socket proxy publish nothing.
+- VictoriaMetrics, VictoriaLogs and the socket proxy attach **only** to the `observability` network — never to `shared-infra`. The proxy's container-inspect endpoint returns every container's environment variables (all secrets), and the two stores are unauthenticated, so on the app network any compromised app could read other apps' logs. Apps see exactly one endpoint: `otel-collector:4318`.
 - No dashboards are provisioned. Dashboards are authored by hand in the Grafana UI and must remain editable.
 - Traces are out of scope. Do not add a `traces` pipeline.
-- Every new service gets a `mem_limit`: collector `300m`, VictoriaMetrics `512m`, VictoriaLogs `384m`, Grafana `256m`, socket proxy `32m`.
+- Every new service gets a `mem_limit`: collector `300m`, VictoriaMetrics `512m`, VictoriaLogs `384m`, Grafana `256m`, socket proxy `64m`.
 - Retention defaults: metrics `30d`, logs `14d` capped at `10GB` of disk.
 - Every new `.env` key must also be added to `.env.example` with a blank or default value. `.env` is gitignored; never commit it.
 
@@ -81,7 +82,8 @@ Task 8.
 - [ ] **Step 2: Start a throwaway socket proxy**
 
 ```bash
-docker run -d --name preflight-proxy --network shared-infra \
+docker network create preflight-net
+docker run -d --name preflight-proxy --network preflight-net \
   -e CONTAINERS=1 -e VERSION=1 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   tecnativa/docker-socket-proxy:latest
@@ -90,9 +92,9 @@ docker run -d --name preflight-proxy --network shared-infra \
 - [ ] **Step 3: Confirm the proxy answers the two endpoints `docker_stats` needs**
 
 ```bash
-docker run --rm --network shared-infra curlimages/curl:latest \
+docker run --rm --network preflight-net curlimages/curl:latest \
   -sf http://preflight-proxy:2375/version >/dev/null && echo "version OK"
-docker run --rm --network shared-infra curlimages/curl:latest \
+docker run --rm --network preflight-net curlimages/curl:latest \
   -sf http://preflight-proxy:2375/containers/json >/dev/null && echo "containers OK"
 ```
 
@@ -125,7 +127,7 @@ EOF
 - [ ] **Step 5: Run the collector and capture output**
 
 ```bash
-docker run -d --name preflight-otel --network shared-infra \
+docker run -d --name preflight-otel --network preflight-net --user 0 \
   -v /tmp/preflight-collector.yaml:/etc/otelcol-contrib/config.yaml:ro \
   -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
   otel/opentelemetry-collector-contrib:latest
@@ -135,6 +137,11 @@ docker run --rm alpine:3.20 echo "preflight-marker"
 sleep 30
 docker logs preflight-otel > /tmp/preflight.log 2>&1
 ```
+
+`--user 0` is required, not optional: the image defaults to UID 10001, which
+cannot read `/var/lib/docker/containers` (mode 0700, root-owned). Without it
+this preflight sees an empty filelog and misdiagnoses assumption B as an
+operator problem when it is a permission problem.
 
 - [ ] **Step 6: Check assumption A — `docker_stats` over `tcp://`**
 
@@ -168,6 +175,7 @@ contains the container ID, plus a `transform` processor. Record which applies.
 
 ```bash
 docker rm -f preflight-otel preflight-proxy
+docker network rm preflight-net
 rm -f /tmp/preflight-collector.yaml /tmp/preflight.log
 ```
 
@@ -250,7 +258,8 @@ without somewhere to write.
 **Interfaces:**
 - Consumes: `*logging` from Task 2.
 - Produces:
-  - service `victoriametrics`, reachable in-network as `http://victoriametrics:8428`
+  - the `observability` network, joined by every later observability service
+  - service `victoriametrics`, reachable on it as `http://victoriametrics:8428`
   - `.env` keys `METRICS_REMOTE_WRITE_URL`, `METRICS_RETENTION`
   - `scripts/observability-smoke-test.sh` with helpers `ok`, `bad`, and a `pass`/`fail` counter, extended by every later task
 
@@ -272,8 +281,9 @@ pass=0; fail=0
 ok()  { echo "  ok   - $1"; pass=$((pass+1)); }
 bad() { echo "  FAIL - $1"; fail=$((fail+1)); }
 
-# Runs curl inside the shared-infra network, so service names resolve.
-netcurl() { docker run --rm --network shared-infra curlimages/curl:latest -s "$@"; }
+# Runs curl inside the observability network, where the backends live.
+# Apps on shared-infra cannot reach these services; that is deliberate.
+netcurl() { docker run --rm --network observability curlimages/curl:latest -s "$@"; }
 
 echo "== VictoriaMetrics =="
 if netcurl -f http://victoriametrics:8428/health | grep -q OK; then
@@ -297,6 +307,17 @@ exist yet.
 
 - [ ] **Step 3: Add the service**
 
+Extend the top-level `networks:` block — the backends get a network of their
+own so applications on `shared-infra` can never reach them:
+
+```yaml
+networks:
+  default:
+    name: shared-infra
+  observability:
+    name: observability
+```
+
 Under `volumes:` add `vmdata:`. Then add the service:
 
 ```yaml
@@ -305,6 +326,7 @@ Under `volumes:` add `vmdata:`. Then add the service:
     restart: unless-stopped
     logging: *logging
     mem_limit: 512m
+    networks: [observability]
     command:
       - "-storageDataPath=/victoria-metrics-data"
       - "-retentionPeriod=${METRICS_RETENTION:-30d}"
@@ -362,7 +384,7 @@ The collector's first two receivers. Both are Linux-host specific.
 - Modify: `scripts/observability-smoke-test.sh`
 
 **Interfaces:**
-- Consumes: `victoriametrics` and `METRICS_REMOTE_WRITE_URL` from Task 3; the two findings from Task 1.
+- Consumes: `victoriametrics`, the `observability` network and `METRICS_REMOTE_WRITE_URL` from Task 3; the two findings from Task 1.
 - Produces:
   - service `otel-collector`, health endpoint `http://otel-collector:13133`
   - the `file_storage` extension at `/var/lib/otelcol/storage`, reused by Task 8 for `filelog` checkpoints
@@ -469,7 +491,8 @@ Under `volumes:` add `otelstate:`. Then:
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
     logging: *logging
-    mem_limit: 32m
+    mem_limit: 64m
+    networks: [observability]
     environment:
       CONTAINERS: 1
       VERSION: 1
@@ -481,6 +504,14 @@ Under `volumes:` add `otelstate:`. Then:
     restart: unless-stopped
     logging: *logging
     mem_limit: 300m
+    # The image defaults to UID 10001, which can neither read
+    # /var/lib/docker/containers (0700 root) nor write the root-owned
+    # otelstate volume. Root inside the container; every mount except the
+    # state volume stays read-only.
+    user: "0"
+    # Bridges both networks: apps push OTLP over shared-infra; the backends
+    # and the socket proxy are reachable only over observability.
+    networks: [default, observability]
     depends_on:
       - victoriametrics
       - docker-socket-proxy
@@ -490,14 +521,11 @@ Under `volumes:` add `otelstate:`. Then:
       - ./otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
       - otelstate:/var/lib/otelcol
       - /:/hostfs:ro
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:13133"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 ```
 
-The collector publishes no host port. It is reached in-network only.
+The collector publishes no host port and has no compose healthcheck: the image
+is built from scratch, with no shell or wget for a healthcheck to exec.
+Liveness is asserted by the smoke test against `:13133` instead.
 
 - [ ] **Step 5: Bring it up and confirm the checks pass**
 
@@ -912,6 +940,7 @@ Under `volumes:` add `vlogsdata:`. Then:
     restart: unless-stopped
     logging: *logging
     mem_limit: 384m
+    networks: [observability]
     command:
       - "-storageDataPath=/victoria-logs-data"
       - "-retentionPeriod=${LOGS_RETENTION:-14d}"
@@ -999,7 +1028,7 @@ Step 7 below covers the identity half by inspection.
 - [ ] **Step 7: Confirm records carry a container identity**
 
 ```bash
-docker run --rm --network shared-infra curlimages/curl:latest \
+docker run --rm --network observability curlimages/curl:latest \
   -s -X POST http://victorialogs:9428/select/logsql/query \
   --data-urlencode 'query=_time:5m' --data-urlencode 'limit=3'
 ```
@@ -1057,9 +1086,18 @@ Append before the final `echo`:
 
 ```bash
 echo "== OTLP round-trip =="
-netcurl -X POST http://otel-collector:4318/v1/logs \
+# POSTs run from shared-infra — the same network path an app uses.
+appcurl() { docker run --rm --network shared-infra curlimages/curl:latest -s "$@"; }
+
+appcurl -X POST http://otel-collector:4318/v1/logs \
   -H 'Content-Type: application/json' \
   -d '{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"smoketest"}}]},"scopeLogs":[{"logRecords":[{"body":{"stringValue":"otlp-roundtrip-probe"}}]}]}]}' \
+  >/dev/null
+
+now="$(date +%s%N)"
+appcurl -X POST http://otel-collector:4318/v1/metrics \
+  -H 'Content-Type: application/json' \
+  -d "{\"resourceMetrics\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"smoketest\"}}]},\"scopeMetrics\":[{\"metrics\":[{\"name\":\"otlp.roundtrip.probe\",\"gauge\":{\"dataPoints\":[{\"asInt\":\"1\",\"timeUnixNano\":\"${now}\"}]}}]}]}]}" \
   >/dev/null
 sleep 20
 if netcurl -X POST http://victorialogs:9428/select/logsql/query \
@@ -1069,13 +1107,15 @@ if netcurl -X POST http://victorialogs:9428/select/logsql/query \
 else
   bad "OTLP log pushed by an app reaches victorialogs"
 fi
+have_metric otlp_roundtrip_probe
 ```
 
 - [ ] **Step 2: Run it to confirm it fails**
 
 Run: `./scripts/observability-smoke-test.sh`
-Expected: `FAIL - OTLP log pushed by an app reaches victorialogs`. The collector
-is not listening on 4318 yet, so the POST is refused.
+Expected: `FAIL - OTLP log pushed by an app reaches victorialogs` and
+`FAIL - metrics present: otlp_roundtrip_probe*`. The collector is not
+listening on 4318 yet, so both POSTs are refused.
 
 - [ ] **Step 3: Add the receiver**
 
@@ -1110,7 +1150,8 @@ sleep 15
 ./scripts/observability-smoke-test.sh
 ```
 
-Expected: `ok   - OTLP log pushed by an app reaches victorialogs`
+Expected: `ok   - OTLP log pushed by an app reaches victorialogs` and
+`ok   - metrics present: otlp_roundtrip_probe*`
 
 - [ ] **Step 5: Document how an app opts in**
 
@@ -1166,7 +1207,7 @@ else
   bad "grafana is healthy"
 fi
 
-ds=$(curl -sf -u "admin:${GRAFANA_ADMIN_PASSWORD}" \
+ds=$(curl -sf -u "admin:${GRAFANA_ADMIN_PASSWORD:-}" \
        "http://127.0.0.1:${GRAFANA_PORT:-3001}/api/datasources" || echo '')
 echo "$ds" | grep -q 'VictoriaMetrics' \
   && ok "VictoriaMetrics datasource provisioned" \
@@ -1228,6 +1269,8 @@ dashboards authored in the UI stay editable and are never overwritten.
     restart: unless-stopped
     logging: *logging
     mem_limit: 256m
+    # default for postgres and the plugin download; observability for the backends.
+    networks: [default, observability]
     depends_on:
       postgres:
         condition: service_healthy
@@ -1393,6 +1436,12 @@ Add to `README.md`, after the `## Backups` section:
 | `grafana` | `127.0.0.1:3001` | dashboards; state in the `grafana` database |
 | `docker-socket-proxy` | in-network only | read-only Docker API for container stats |
 
+The backends and the socket proxy live on a separate `observability` network
+that apps never join: an app cannot read other apps' logs, write bogus
+metrics, or reach the Docker API proxy (whose container-inspect responses
+include every service's environment variables). Apps see exactly one
+observability endpoint: `otel-collector:4318` on `shared-infra`.
+
 On a fresh server, after `docker compose up -d`:
 
 ```sh
@@ -1431,7 +1480,7 @@ git commit -m "feat(observability): back up grafana state, pin images, document 
 - `./scripts/smoke-test.sh` still passes — the existing isolation guarantees are unchanged.
 - Grafana serves the new subdomain and both datasources return data in Explore.
 - `backups/<today>/grafana.sql.gz` exists and is non-empty.
-- `git log --oneline main..observability` shows one commit per task.
+- `git log --oneline main..observability` shows one commit per task (Task 1, the preflight, commits nothing).
 
 ## Deliberately not done here
 

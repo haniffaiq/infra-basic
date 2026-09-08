@@ -119,10 +119,13 @@ docs/superpowers/specs/2026-09-08-observability-design.md
 | `victoriametrics` | `victoriametrics/victoria-metrics` | `127.0.0.1:8428` | 512m | `vmdata` |
 | `victorialogs` | `victoriametrics/victoria-logs` | `127.0.0.1:9428` | 384m | `vlogsdata` |
 | `grafana` | `grafana/grafana` | `127.0.0.1:${GRAFANA_PORT}` | 256m | none (state in PostgreSQL) |
-| `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | none | 32m | none |
+| `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | none | 64m | none |
 
-All join the existing `shared-infra` network. The collector publishes no host
-port; applications reach it as `otel-collector:4318`.
+Two networks. The collector and Grafana join both `shared-infra` and a new
+`observability` network; VictoriaMetrics, VictoriaLogs and the socket proxy
+join **only** `observability`. Applications therefore see exactly one
+observability endpoint — `otel-collector:4318` — and cannot reach the
+backends or the Docker API proxy. The collector publishes no host port.
 
 Grafana coexists with the pre-existing instance: it binds `127.0.0.1:3001` and
 is served from a new subdomain. The existing Grafana on port 3000 and its
@@ -188,7 +191,9 @@ dropping `docker_stats`, since `hostmetrics` and `filelog` do not depend
 on it.
 
 Processors, in pipeline order: `memory_limiter` (200 MiB, below the 300m
-container limit), `resourcedetection` (`env`, `system`, `docker`), `batch`.
+container limit), `resourcedetection` (`env`, `system`), `batch`. The `docker` detector is
+deliberately absent: it needs Docker API access the collector does not have —
+the socket is reachable only through the proxy, for `docker_stats`.
 
 Exporters:
 
@@ -198,8 +203,10 @@ Exporters:
 Both are configured with `retry_on_failure` and a **persistent** `sending_queue`
 backed by the `file_storage` extension, so a backend restart does not lose data.
 
-Extensions: `health_check` on `:13133` (used as the container healthcheck) and
-`file_storage` on the `otelstate` volume.
+Extensions: `health_check` on `:13133` and `file_storage` on the `otelstate`
+volume. The health endpoint is asserted by the smoke test, not by a compose
+healthcheck — the image is built from scratch, with no shell or wget for a
+healthcheck to exec.
 
 Pipelines: `metrics` and `logs`. A `traces` pipeline is deliberately absent and
 is the single addition required when Tempo lands.
@@ -298,12 +305,26 @@ container listing and stats.
 `tecnativa/docker-socket-proxy` is therefore placed in front of it, with
 `CONTAINERS=1` (list and stats) and `VERSION=1` (the Docker client pings
 `/version` to negotiate an API version and fails without it), and every
-mutating endpoint disabled. The proxy holds the socket
-mount; the collector talks HTTP to the proxy. It costs roughly 32 MB and
-removes the only root-equivalent blast radius in the stack.
+mutating endpoint disabled. The proxy holds the socket mount; the collector
+talks HTTP to the proxy. It costs roughly 64 MB and removes the only
+root-equivalent blast radius in the stack.
+
+The proxy is itself sensitive: `CONTAINERS=1` allows container *inspect*,
+whose response includes `Config.Env` — every service's environment variables,
+which is to say every secret in the stack. It therefore lives only on the
+`observability` network, which application containers never join. The same
+placement keeps VictoriaMetrics and VictoriaLogs — both unauthenticated — out
+of the applications' reach: on `shared-infra`, any compromised app could read
+every other app's logs or write bogus metrics, defeating the per-app isolation
+this repo exists to provide.
 
 Other notes:
 
+- The collector runs as root inside its container (`user: "0"`). The image
+  defaults to UID 10001, which can neither read `/var/lib/docker/containers`
+  (mode 0700, root-owned) nor write the root-owned `otelstate` volume — as
+  UID 10001 it would crash on start and collect no logs. Every mount it holds
+  is read-only except the state volume.
 - The collector holds the Redis `default` (admin) password, required by the
   `redis` receiver for `INFO`, and the `otel_monitor` PostgreSQL password.
 - No new host ports are exposed publicly. VictoriaMetrics, VictoriaLogs, and
