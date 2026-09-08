@@ -1,0 +1,20 @@
+# Grafana provisioning: datasources only.
+#
+# No dashboard provider is configured here, deliberately. Dashboards are
+# authored by hand in the Grafana UI, so they must stay editable and must
+# never be overwritten by a provisioner on restart.
+apiVersion: 1
+
+datasources:
+  - name: VictoriaMetrics
+    type: prometheus
+    access: proxy
+    url: http://victoriametrics:8428
+    isDefault: true
+    jsonData:
+      timeInterval: 30s
+
+  - name: VictoriaLogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://victorialogs:9428

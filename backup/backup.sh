@@ -1,9 +1,13 @@
 #!/bin/sh
-# Dumps all 4 Postgres databases, snapshots Redis, mirrors all MinIO buckets
+# Dumps every Postgres database, snapshots Redis, mirrors all MinIO buckets
 # into ./backups/YYYY-MM-DD/, then prunes backups older than the retention window.
 set -eu
 
 APPS="petag jbc photoboxtyb postyb"
+# grafana holds hand-authored dashboards, so it must be dumped — but it has no
+# MinIO bucket, and `mc mirror` on a missing bucket would abort the whole run
+# under `set -e`, after the dumps but before the prune. Hence two lists.
+PG_DATABASES="$APPS grafana"
 DATE="$(date +%F)"
 OUT="/backups/${DATE}"
 mkdir -p "$OUT"
@@ -11,7 +15,7 @@ echo "=== backup ${DATE} $(date +%T) ==="
 
 # ── Postgres ──────────────────────────────────────────────
 export PGPASSWORD="$POSTGRES_PASSWORD"
-for app in $APPS; do
+for app in $PG_DATABASES; do
   pg_dump -h postgres -U postgres -d "$app" | gzip > "${OUT}/${app}.sql.gz"
   echo "postgres: dumped ${app}"
 done

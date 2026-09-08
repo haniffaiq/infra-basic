@@ -1,22 +1,41 @@
 name: infa-basic
 
+# Docker's json-file logs are read by the collector's filelog receiver.
+# Unrotated they grow until the disk fills, so every service caps them.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 # This project owns the `shared-infra` network. App repos join it with:
 #   networks:
 #     shared-infra:
 #       external: true
+#
+# `observability` is a second, private network. VictoriaMetrics, VictoriaLogs
+# and the socket proxy live only there: the stores are unauthenticated and the
+# proxy's container-inspect response carries every service's environment
+# variables. Apps see exactly one observability endpoint, `otel-collector:4318`.
 networks:
   default:
     name: shared-infra
+  observability:
+    name: observability
 
 volumes:
   pgdata:
   redisdata:
   miniodata:
+  vmdata:
+  vlogsdata:
+  otelstate:
 
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
@@ -39,6 +58,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set in .env}
       PETAG_REDIS_PASSWORD: ${PETAG_REDIS_PASSWORD:?set in .env}
@@ -62,9 +82,14 @@ services:
   minio:
     image: minio/minio
     restart: unless-stopped
+    logging: *logging
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in .env}
+      # Without this the metrics endpoint demands a JWT. Safe here: MinIO
+      # publishes only on 127.0.0.1 and is otherwise reachable only from
+      # shared-infra.
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     command: server /data --console-address ":9001"
     volumes:
       - miniodata:/data
@@ -75,6 +100,7 @@ services:
   minio-provisioner:
     image: minio/mc
     restart: "no"
+    logging: *logging
     depends_on:
       minio:
         condition: service_started
@@ -96,6 +122,7 @@ services:
   backup:
     build: ./backup
     restart: unless-stopped
+    logging: *logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,3 +138,118 @@ services:
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
     volumes:
       - ./backups:/backups
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    networks: [observability]
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=${METRICS_RETENTION:-30d}"
+      - "-httpListenAddr=:8428"
+    volumes:
+      - vmdata:/victoria-metrics-data
+    ports:
+      - "127.0.0.1:8428:8428"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8428/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 384m
+    networks: [observability]
+    command:
+      - "-storageDataPath=/victoria-logs-data"
+      - "-retentionPeriod=${LOGS_RETENTION:-14d}"
+      - "-retention.maxDiskSpaceUsageBytes=${LOGS_MAX_DISK:-10GB}"
+      - "-httpListenAddr=:9428"
+    volumes:
+      - vlogsdata:/victoria-logs-data
+    ports:
+      - "127.0.0.1:9428:9428"
+    # No healthcheck: the victoria-logs image is distroless — no /bin/sh and no
+    # wget for one to exec, so it could only ever report unhealthy. (The
+    # victoria-metrics image above does ship wget, so it keeps its healthcheck.)
+    # The smoke test asserts /health instead.
+
+  # Holds the Docker socket so the collector never does: a :ro socket mount
+  # makes only the file read-only, not the API behind it, which would let a
+  # compromised collector create privileged containers and escape to the host.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 64m
+    networks: [observability]
+    environment:
+      CONTAINERS: 1
+      VERSION: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 300m
+    # The image defaults to UID 10001, which can neither read
+    # /var/lib/docker/containers (0700 root) nor write the root-owned
+    # otelstate volume. Root inside the container; every mount except the
+    # state volume stays read-only.
+    user: "0"
+    # Bridges both networks: apps push OTLP over shared-infra; the backends
+    # and the socket proxy are reachable only over observability.
+    networks: [default, observability]
+    depends_on:
+      - victoriametrics
+      - victorialogs
+      - docker-socket-proxy
+    environment:
+      METRICS_REMOTE_WRITE_URL: ${METRICS_REMOTE_WRITE_URL}
+      LOGS_OTLP_ENDPOINT: ${LOGS_OTLP_ENDPOINT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      OTEL_PG_PASSWORD: ${OTEL_PG_PASSWORD}
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - otelstate:/var/lib/otelcol
+      - /:/hostfs:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    # No published port and no healthcheck: the image is built from scratch,
+    # with no shell or wget for a healthcheck to exec. Liveness is asserted by
+    # the smoke test against :13133 instead.
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    # default for postgres and the plugin download; observability for the backends.
+    networks: [default, observability]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres:5432
+      GF_DATABASE_NAME: grafana
+      GF_DATABASE_USER: grafana
+      GF_DATABASE_PASSWORD: ${GRAFANA_DB_PASSWORD}
+      GF_DATABASE_SSL_MODE: disable
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set in .env}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_INSTALL_PLUGINS: victoriametrics-logs-datasource
+    # No volume: all state lives in the `grafana` PostgreSQL database, which
+    # backup.sh dumps. Plugin installation needs outbound internet on first start.
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"

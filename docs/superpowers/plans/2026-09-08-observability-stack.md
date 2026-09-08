@@ -950,12 +950,13 @@ Under `volumes:` add `vlogsdata:`. Then:
       - vlogsdata:/victoria-logs-data
     ports:
       - "127.0.0.1:9428:9428"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9428/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    # No healthcheck: the victoria-logs image is distroless — no /bin/sh and no
+    # wget for one to exec, so it could only ever report unhealthy. The
+    # victoria-metrics image does ship wget, so it keeps its healthcheck.
 ```
+
+Verified against the pulled image: `victoriametrics/victoria-logs:latest` has
+entrypoint `/victoria-logs-prod` and neither `/bin/sh` nor `/usr/bin/wget`.
 
 - [ ] **Step 5: Add the filelog receiver, exporter and pipeline**
 
@@ -1362,7 +1363,13 @@ Expected: `FAIL - backup.sh dumps the grafana database`
 
 - [ ] **Step 3: Add `grafana` to the backup list**
 
-In `backup/backup.sh`, change:
+`APPS` drives **two** loops in this file: `pg_dump` and `mc mirror`. Grafana
+has a database but no MinIO bucket, so it cannot simply be appended — `mc
+mirror` on a missing bucket exits non-zero and, under `set -e`, aborts the run
+after the dumps and Redis snapshot but before the retention prune. Old backups
+would then stop being pruned silently while `grafana.sql.gz` still appeared.
+
+Split the list instead. Change:
 
 ```sh
 APPS="petag jbc photoboxtyb postyb"
@@ -1371,9 +1378,20 @@ APPS="petag jbc photoboxtyb postyb"
 to:
 
 ```sh
-# grafana holds hand-authored dashboards; it is not an app but must be dumped.
-APPS="petag jbc photoboxtyb postyb grafana"
+APPS="petag jbc photoboxtyb postyb"
+# grafana holds hand-authored dashboards, so it must be dumped — but it has no
+# MinIO bucket, and `mc mirror` on a missing bucket would abort the whole run
+# under `set -e`, after the dumps but before the prune. Hence two lists.
+PG_DATABASES="$APPS grafana"
 ```
+
+and change the `pg_dump` loop only — the `mc mirror` loop keeps `$APPS`:
+
+```sh
+for app in $PG_DATABASES; do
+```
+
+Also update the file's header comment: it says "all 4 Postgres databases".
 
 - [ ] **Step 4: Prove the dump actually works**
 

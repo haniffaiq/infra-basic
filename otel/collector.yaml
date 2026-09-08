@@ -1,0 +1,129 @@
+# OpenTelemetry Collector (contrib) config for the shared-infra stack.
+# The native receivers below replace node_exporter, cadvisor,
+# postgres_exporter and redis_exporter — one process, no sidecars.
+
+receivers:
+  # Opt-in endpoint for applications. In-network only; no host port is
+  # published. Apps set OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  hostmetrics:
+    root_path: /hostfs
+    collection_interval: 30s
+    scrapers:
+      cpu:
+      memory:
+      load:
+      disk:
+      filesystem:
+      network:
+      paging:
+
+  # Reaches Docker through tecnativa/docker-socket-proxy, never a mounted
+  # socket: a :ro socket mount makes only the file read-only, not the API
+  # behind it, which would allow creating privileged containers.
+  docker_stats:
+    endpoint: tcp://docker-socket-proxy:2375
+    collection_interval: 30s
+
+  # otel_monitor is created by scripts/setup-monitoring-db.sh. It needs an
+  # explicit GRANT CONNECT per database — the postgres init script revokes
+  # CONNECT from PUBLIC.
+  postgresql:
+    endpoint: postgres:5432
+    transport: tcp
+    username: otel_monitor
+    password: ${env:OTEL_PG_PASSWORD}
+    collection_interval: 30s
+    tls:
+      insecure: true
+
+  # Issues INFO as the `default` user, which redis/entrypoint.sh grants +@all.
+  redis:
+    endpoint: redis:6379
+    password: ${env:REDIS_PASSWORD}
+    collection_interval: 30s
+
+  # MinIO exposes Prometheus metrics of its own, so it is scraped rather than
+  # received. Requires MINIO_PROMETHEUS_AUTH_TYPE=public on the minio service.
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: minio
+          scrape_interval: 30s
+          metrics_path: /minio/v2/metrics/cluster
+          static_configs:
+            - targets: [minio:9000]
+
+  # storage: file_storage checkpoints read positions on the otelstate volume;
+  # without it every collector restart either replays or skips lines.
+  filelog:
+    include: [/var/lib/docker/containers/*/*-json.log]
+    start_at: end
+    storage: file_storage
+    operators:
+      - type: container
+
+processors:
+  # 200 MiB sits below the 300m container limit, so the collector sheds data
+  # rather than being OOM-killed. Must run first in every pipeline.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+    spike_limit_mib: 40
+  # The `docker` detector is deliberately absent: it needs Docker API access
+  # the collector does not have — the socket is reachable only through the
+  # proxy, and only for docker_stats.
+  resourcedetection:
+    detectors: [env, system]
+    system:
+      hostname_sources: [os]
+  batch:
+    timeout: 10s
+
+exporters:
+  # Both exporters use a persistent sending_queue backed by file_storage, so a
+  # backend restart drains from disk instead of losing data.
+  prometheusremotewrite:
+    endpoint: ${env:METRICS_REMOTE_WRITE_URL}
+    resource_to_telemetry_conversion:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      storage: file_storage
+
+  otlphttp/logs:
+    logs_endpoint: ${env:LOGS_OTLP_ENDPOINT}
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      storage: file_storage
+
+extensions:
+  # Liveness is asserted by scripts/observability-smoke-test.sh, not by a
+  # compose healthcheck: the image is built from scratch, with no shell.
+  health_check:
+    endpoint: 0.0.0.0:13133
+  file_storage:
+    directory: /var/lib/otelcol/storage
+
+service:
+  extensions: [health_check, file_storage]
+  pipelines:
+    # No traces pipeline: traces are out of scope for this stack.
+    metrics:
+      receivers: [otlp, hostmetrics, docker_stats, redis, postgresql, prometheus]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp, filelog]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlphttp/logs]

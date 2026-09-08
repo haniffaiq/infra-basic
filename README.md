@@ -48,6 +48,20 @@ MinIO bucket `petag`.
 Admin access from the host only (bound to `127.0.0.1`): Postgres `5432`,
 Redis `6379`, MinIO API `9000`, MinIO console `9001`.
 
+## Observability
+
+Any app joined to `shared-infra` is already observed — its container logs and
+its CPU, memory and network usage are collected with no code change, as are the
+shared Postgres, Redis and MinIO it uses.
+
+To also emit its own metrics and structured logs, an app installs an
+OpenTelemetry SDK and sets:
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+OTEL_SERVICE_NAME=<app>
+```
+
 ## Isolation
 
 - **Postgres** — each app owns its database; `CONNECT` is revoked from `PUBLIC`,
@@ -76,6 +90,44 @@ gunzip -c backups/2026-05-20/petag.sql.gz | \
   docker compose exec -T postgres psql -U postgres -d petag
 ```
 
+## Observability stack
+
+| Service | Bound on | Purpose |
+|---|---|---|
+| `otel-collector` | in-network only | collects everything; OTLP on `:4317` / `:4318` |
+| `victoriametrics` | `127.0.0.1:8428` | metrics, 30-day retention |
+| `victorialogs` | `127.0.0.1:9428` | logs, 14 days, capped at 10 GB |
+| `grafana` | `127.0.0.1:3001` | dashboards; state in the `grafana` database |
+| `docker-socket-proxy` | in-network only | read-only Docker API for container stats |
+
+The backends and the socket proxy live on a separate `observability` network
+that apps never join: one app cannot read another's logs, write bogus metrics,
+or reach the Docker API proxy — whose container-inspect responses include every
+container's environment variables. Apps see exactly one observability endpoint:
+`otel-collector:4318`.
+
+On a fresh server, after `docker compose up -d`:
+
+```sh
+./scripts/setup-monitoring-db.sh        # creates otel_monitor + the grafana database
+./scripts/observability-smoke-test.sh   # verifies collection end to end
+```
+
+Serve Grafana by pointing an nginx server block at `127.0.0.1:3001`. This repo
+does not manage nginx.
+
+**Adding an app:** grant the collector access to its database, or its database
+metrics are silently missing while every other signal looks correct:
+
+```sh
+docker compose exec postgres psql -U postgres -c \
+  "GRANT CONNECT ON DATABASE app5 TO otel_monitor;"
+```
+
+**To use an existing Prometheus instead of VictoriaMetrics:** point
+`METRICS_REMOTE_WRITE_URL` at it and stop the `victoriametrics` service. The
+collector needs no other change.
+
 ## Adding a 5th app later
 
 The Postgres init script and MinIO provisioner only create resources for the
@@ -93,6 +145,12 @@ editing it after first boot has no effect. To add an app on a running stack:
    `docker compose restart redis`.
 4. MinIO — add a `provision` line to `minio/provision.sh`, then
    `docker compose up -d minio-provisioner`.
+5. Observability — grant the collector `CONNECT` on the new database, or its
+   database metrics are silently missing while every other signal looks correct:
+   ```sh
+   docker compose exec postgres psql -U postgres -c \
+     "GRANT CONNECT ON DATABASE app5 TO otel_monitor;"
+   ```
 
 (For a clean 5-app setup from scratch, just edit the 4 source files first.)
 
