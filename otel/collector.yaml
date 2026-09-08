@@ -66,8 +66,24 @@ receivers:
     include: [/var/lib/docker/containers/*/*-json.log]
     start_at: end
     storage: file_storage
+    # The `container` operator derives container name/id from the log file's
+    # path, so it needs log.file.path on every record. Without this it rejects
+    # every entry with "add_metadata_from_filepath enabled, but the log record
+    # attribute 'log.file.path' is missing" and no container logs are ingested.
+    include_file_path: true
     operators:
+      # add_metadata_from_filepath parses Kubernetes pod paths
+      # (/var/log/pods/<ns>_<pod>_<uid>/...). These are plain Docker json-file
+      # paths, which it cannot parse — it fails every record with "failed to
+      # detect a valid log path" — so container metadata is taken from the path
+      # by the regex operator below instead.
       - type: container
+        format: docker
+        add_metadata_from_filepath: false
+      - type: regex_parser
+        parse_from: attributes["log.file.path"]
+        regex: '^/var/lib/docker/containers/(?P<container_id>[a-f0-9]{12})'
+        parse_to: attributes
 
 processors:
   # 200 MiB sits below the 300m container limit, so the collector sheds data
@@ -114,6 +130,10 @@ extensions:
     endpoint: 0.0.0.0:13133
   file_storage:
     directory: /var/lib/otelcol/storage
+    # The otelstate volume mounts empty at /var/lib/otelcol, so the storage
+    # subdirectory does not exist on first start and the collector refuses to
+    # boot ("directory must exist"). Let it create its own subdirectory.
+    create_directory: true
 
 service:
   extensions: [health_check, file_storage]
