@@ -138,7 +138,10 @@ records therefore carry `container_id`, not a name.
 The name is resolved at query time instead: `docker_stats` publishes
 `container_id` and `container_name` as metric labels, refreshed every 30s. The
 `Container Logs` dashboard uses that as a lookup — you pick a name, it filters
-logs by the matching id. Import it once:
+logs by the matching id. The panels prefix-match on that id, so the dashboard
+works both against records already stored (12-char id) and against the
+full-length id the collector writes after `otel/collector.yaml` is redeployed.
+Import it once:
 
 ```sh
 # Grafana → Dashboards → New → Import → upload the file, then pick the
