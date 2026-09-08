@@ -18,3 +18,16 @@ datasources:
     type: victoriametrics-logs-datasource
     access: proxy
     url: http://victorialogs:9428
+
+  # The pre-existing Prometheus from the `monitoring` compose project. It is
+  # the only source of blackbox (probe_*), nginx (nginx_*), node-exporter
+  # (node_*) and docker-stats (dockerstats_*) metrics — the OTel collector
+  # produces none of those — so the dashboards migrated from the old Grafana
+  # query it. uid is pinned because those dashboards reference it by uid.
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    jsonData:
+      timeInterval: 15s

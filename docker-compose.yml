@@ -22,6 +22,12 @@ networks:
     name: shared-infra
   observability:
     name: observability
+  # Owned by the separate `monitoring` compose project. Grafana joins it to
+  # reach the Prometheus that still feeds the node/nginx/blackbox/docker-stats
+  # dashboards — signals the OTel collector does not yet produce.
+  monitoring:
+    name: monitoring
+    external: true
 
 volumes:
   pgdata:
@@ -240,8 +246,9 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 256m
-    # default for postgres and the plugin download; observability for the backends.
-    networks: [default, observability]
+    # default for postgres and the plugin download; observability for the
+    # backends; monitoring for the legacy Prometheus datasource.
+    networks: [default, observability, monitoring]
     depends_on:
       postgres:
         condition: service_healthy
