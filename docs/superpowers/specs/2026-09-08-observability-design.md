@@ -27,8 +27,8 @@ carried out with full visibility into their effect.
 
 ## Environment constraints
 
-- Single VPS, 8 GB RAM. No Kubernetes, no cloud-managed services, no multiple
-  instances.
+- Single Ubuntu VPS, 8 GB RAM. No Kubernetes, no cloud-managed services, no
+  multiple instances.
 - nginx runs under systemd on the host, not in a container. **This repo makes
   no changes to nginx.** nginx telemetry (`stub_status`, JSON access logs) is
   explicitly out of scope.
