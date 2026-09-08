@@ -232,6 +232,10 @@ services:
       LOGS_OTLP_ENDPOINT: ${LOGS_OTLP_ENDPOINT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       OTEL_PG_PASSWORD: ${OTEL_PG_PASSWORD}
+      # resourcedetection's `system` detector runs inside this container, so it
+      # reports the collector's container id as host.name. The `env` detector
+      # runs first, so this overrides it with the real host.
+      OTEL_RESOURCE_ATTRIBUTES: host.name=${OTEL_HOST_NAME:-infra-vps}
     volumes:
       - ./otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
       - otelstate:/var/lib/otelcol

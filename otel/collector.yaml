@@ -80,9 +80,15 @@ receivers:
       - type: container
         format: docker
         add_metadata_from_filepath: false
+      # Docker's json-file records carry no container name — only
+      # {"log","stream","time"} — and the directory is the container id. The
+      # name is only obtainable from the Docker API, so it is joined at query
+      # time instead: docker_stats publishes container_id AND container_name as
+      # metric labels, and the log dashboard maps one to the other.
+      # Capture the full 64-hex id so that join is an equality, not a prefix.
       - type: regex_parser
         parse_from: attributes["log.file.path"]
-        regex: '^/var/lib/docker/containers/(?P<container_id>[a-f0-9]{12})'
+        regex: '^/var/lib/docker/containers/(?P<container_id>[a-f0-9]{64})'
         parse_to: attributes
 
 processors:

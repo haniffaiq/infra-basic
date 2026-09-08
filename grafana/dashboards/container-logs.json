@@ -1,0 +1,91 @@
+{
+  "__inputs": [
+    {"name": "DS_VICTORIALOGS", "label": "VictoriaLogs", "type": "datasource",
+     "pluginId": "victoriametrics-logs-datasource"},
+    {"name": "DS_VICTORIAMETRICS", "label": "VictoriaMetrics", "type": "datasource",
+     "pluginId": "prometheus"}
+  ],
+  "title": "Container Logs",
+  "uid": "container-logs",
+  "tags": ["logs", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_VICTORIAMETRICS}"},
+        "query": {"qryType": 1, "query": "container_cpu_utilization_ratio", "label": "container_name"},
+        "refresh": 2,
+        "includeAll": false,
+        "sort": 1,
+        "description": "Container names come from docker_stats metrics. Docker's json log files carry only the container id, so the name is resolved here and mapped to an id below."
+      },
+      {
+        "name": "cid",
+        "label": "Container id",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_VICTORIAMETRICS}"},
+        "query": {"qryType": 1,
+                  "query": "container_cpu_utilization_ratio{container_name=\"$container\"}",
+                  "label": "container_id"},
+        "refresh": 2,
+        "hide": 2,
+        "description": "The id behind the selected name. This is what the log queries actually filter on."
+      },
+      {
+        "name": "search",
+        "label": "Search",
+        "type": "textbox",
+        "query": "",
+        "description": "Optional LogsQL word or phrase, ANDed with the container filter. Leave empty for everything."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "logs",
+      "title": "$container",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "${DS_VICTORIALOGS}"},
+      "gridPos": {"h": 13, "w": 24, "x": 0, "y": 0},
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending",
+                  "enableLogDetails": true},
+      "targets": [
+        {"refId": "A", "expr": "container_id:\"$cid\" $search", "queryType": "instant", "maxLines": 500}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "$container — CPU / memory",
+      "description": "Metrics for the same container, so a spike in the log above can be lined up against resource use.",
+      "datasource": {"type": "prometheus", "uid": "${DS_VICTORIAMETRICS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "fieldConfig": {"defaults": {"custom": {"fillOpacity": 8, "lineWidth": 1}}, "overrides": []},
+      "targets": [
+        {"refId": "A", "expr": "container_cpu_utilization_ratio{container_name=\"$container\"}",
+         "legendFormat": "cpu ratio"},
+        {"refId": "B", "expr": "container_memory_usage_total{container_name=\"$container\"} / 1024 / 1024",
+         "legendFormat": "memory MiB"}
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "Errors — all containers",
+      "description": "Unfiltered by container on purpose: this is the panel to open first when something is wrong but you do not yet know where.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "${DS_VICTORIALOGS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending",
+                  "enableLogDetails": true},
+      "targets": [
+        {"refId": "A",
+         "expr": "_msg:~\"(?i)error|panic|fatal|exception|refused|timeout\"",
+         "queryType": "instant", "maxLines": 200}
+      ]
+    }
+  ]
+}
