@@ -33,7 +33,7 @@ volumes:
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: docker.io/library/postgres:16-alpine
     restart: unless-stopped
     logging: *logging
     environment:
@@ -44,6 +44,7 @@ services:
       JBC_DB_PASSWORD: ${JBC_DB_PASSWORD:?set in .env}
       PHOTOBOXTYB_DB_PASSWORD: ${PHOTOBOXTYB_DB_PASSWORD:?set in .env}
       POSTYB_DB_PASSWORD: ${POSTYB_DB_PASSWORD:?set in .env}
+      OSVYN_DB_PASSWORD: ${OSVYN_DB_PASSWORD:?set in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -56,7 +57,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: docker.io/library/redis:7-alpine
     restart: unless-stopped
     logging: *logging
     environment:
@@ -65,6 +66,7 @@ services:
       JBC_REDIS_PASSWORD: ${JBC_REDIS_PASSWORD:?set in .env}
       PHOTOBOXTYB_REDIS_PASSWORD: ${PHOTOBOXTYB_REDIS_PASSWORD:?set in .env}
       POSTYB_REDIS_PASSWORD: ${POSTYB_REDIS_PASSWORD:?set in .env}
+      OSVYN_REDIS_PASSWORD: ${OSVYN_REDIS_PASSWORD:?set in .env}
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
     command: ["redis-server", "/etc/redis/redis.conf"]
     volumes:
@@ -80,7 +82,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio
+    image: docker.io/minio/minio
     restart: unless-stopped
     logging: *logging
     environment:
@@ -98,7 +100,7 @@ services:
       - "127.0.0.1:9001:9001"
 
   minio-provisioner:
-    image: minio/mc
+    image: docker.io/minio/mc
     restart: "no"
     logging: *logging
     depends_on:
@@ -115,6 +117,8 @@ services:
       PHOTOBOXTYB_MINIO_SECRET_KEY: ${PHOTOBOXTYB_MINIO_SECRET_KEY:?set in .env}
       POSTYB_MINIO_ACCESS_KEY: ${POSTYB_MINIO_ACCESS_KEY:?set in .env}
       POSTYB_MINIO_SECRET_KEY: ${POSTYB_MINIO_SECRET_KEY:?set in .env}
+      OSVYN_MINIO_ACCESS_KEY: ${OSVYN_MINIO_ACCESS_KEY:?set in .env}
+      OSVYN_MINIO_SECRET_KEY: ${OSVYN_MINIO_SECRET_KEY:?set in .env}
     entrypoint: ["/bin/sh", "/provision.sh"]
     volumes:
       - ./minio/provision.sh:/provision.sh:ro
@@ -131,8 +135,14 @@ services:
       minio:
         condition: service_started
     environment:
+      BACKUP_APPS: ${BACKUP_APPS:-petag jbc photoboxtyb postyb osvyn}
+      POSTGRES_HOST: ${BACKUP_POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${BACKUP_POSTGRES_PORT:-5432}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: ${BACKUP_REDIS_HOST:-redis}
+      REDIS_PORT: ${BACKUP_REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MINIO_ENDPOINT: ${BACKUP_MINIO_ENDPOINT:-http://minio:9000}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
@@ -140,7 +150,7 @@ services:
       - ./backups:/backups
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:latest
+    image: docker.io/victoriametrics/victoria-metrics:latest
     restart: unless-stopped
     logging: *logging
     mem_limit: 512m
@@ -160,7 +170,7 @@ services:
       retries: 3
 
   victorialogs:
-    image: victoriametrics/victoria-logs:latest
+    image: docker.io/victoriametrics/victoria-logs:latest
     restart: unless-stopped
     logging: *logging
     mem_limit: 384m
@@ -183,7 +193,7 @@ services:
   # makes only the file read-only, not the API behind it, which would let a
   # compromised collector create privileged containers and escape to the host.
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: docker.io/tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
     logging: *logging
     mem_limit: 64m
@@ -195,7 +205,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: docker.io/otel/opentelemetry-collector-contrib:latest
     restart: unless-stopped
     logging: *logging
     mem_limit: 300m
@@ -226,7 +236,7 @@ services:
     # the smoke test against :13133 instead.
 
   grafana:
-    image: grafana/grafana:latest
+    image: docker.io/grafana/grafana:latest
     restart: unless-stopped
     logging: *logging
     mem_limit: 256m
