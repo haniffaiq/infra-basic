@@ -368,7 +368,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "PD775F2863313E6C7"
           },
-          "expr": "container_id:~\"${container:pipe}\" log.iostream:~\"${stream:pipe}\" ${search} | stats count_uniq(container_id) as containers",
+          "expr": "container_id:~\"${container:pipe}\" log.iostream:~\"${stream:pipe}\" ${search} | extract_regexp \"^(?P<container_id>.{12})\" from container_id | stats count_uniq(container_id) as containers",
           "queryType": "stats"
         }
       ]
@@ -687,7 +687,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "PD775F2863313E6C7"
           },
-          "expr": "container_id:~\"${container:pipe}\" log.iostream:~\"${stream:pipe}\" ${search} | stats by (container_id) count() as lines | sort by (lines desc) | limit 10",
+          "expr": "container_id:~\"${container:pipe}\" log.iostream:~\"${stream:pipe}\" ${search} | extract_regexp \"^(?P<container_id>.{12})\" from container_id | stats by (container_id) count() as lines | sort by (lines desc) | limit 10",
           "queryType": "stats",
           "legendFormat": "{{container_id}}"
         }
