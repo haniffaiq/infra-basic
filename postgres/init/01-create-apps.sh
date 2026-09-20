@@ -16,7 +16,6 @@ EOSQL
 }
 
 create_app petag       "$PETAG_DB_PASSWORD"
-create_app jbc         "$JBC_DB_PASSWORD"
 create_app photoboxtyb "$PHOTOBOXTYB_DB_PASSWORD"
 create_app postyb      "$POSTYB_DB_PASSWORD"
 create_app osvyn       "$OSVYN_DB_PASSWORD"

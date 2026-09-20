@@ -13,7 +13,7 @@ set -a; . ./.env; set +a
 
 # Hardcoded, like the rest of the repo. Re-run this script after adding an app,
 # or the collector will silently report no metrics for the new database.
-APPS="petag jbc photoboxtyb postyb osvyn"
+APPS="petag photoboxtyb postyb osvyn"
 
 psql() { docker compose exec -T -e PGPASSWORD="$POSTGRES_PASSWORD" postgres \
            psql -v ON_ERROR_STOP=1 -U postgres "$@"; }

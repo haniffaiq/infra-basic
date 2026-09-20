@@ -4,7 +4,7 @@
 # into ./backups/YYYY-MM-DD/, then prunes backups older than the retention window.
 set -eu
 
-APPS="${BACKUP_APPS:-petag jbc photoboxtyb postyb}"
+APPS="${BACKUP_APPS:-petag photoboxtyb postyb}"
 DATE="$(date +%F)"
 OUT="/backups/${DATE}"
 TMP="${OUT}/.tmp"

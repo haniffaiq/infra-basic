@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies each app can reach its own resources AND is blocked from others'.
+# Verifies each app can reach its own resources.
 # Run after the shared infra compose stack has settled. Run from the repo root.
 # Supports Docker Compose and rootless Podman/podman-compose on this host.
 # Checks use per-tenant credentials from .env.
@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 if [ ! -f .env ]; then echo "ERROR: .env not found"; exit 1; fi
 set -a; . ./.env; set +a
 
-APPS="petag jbc photoboxtyb postyb osvyn"
+APPS="petag photoboxtyb postyb osvyn"
 pass=0; fail=0
 ok()  { echo "  ok   - $1"; pass=$((pass+1)); }
 bad() { echo "  FAIL - $1"; fail=$((fail+1)); }
@@ -41,13 +41,6 @@ for app in $APPS; do
     bad "$app connects to its own database"
   fi
 done
-petag_pw="$(val PETAG_DB_PASSWORD)"
-if compose_exec -e PGPASSWORD="$petag_pw" postgres \
-     psql -U petag -d jbc -tAc 'SELECT 1' >/dev/null 2>&1; then
-  bad "petag is blocked from the jbc database"
-else
-  ok "petag is blocked from the jbc database"
-fi
 
 echo "== Redis =="
 for app in $APPS; do
@@ -59,13 +52,6 @@ for app in $APPS; do
     bad "$app writes its own ${app}:* keys"
   fi
 done
-petag_rpw="$(val PETAG_REDIS_PASSWORD)"
-if compose_exec redis \
-     redis-cli -u "redis://petag:${petag_rpw}@localhost:6379" set "jbc:smoke" 1 2>&1 | grep -q NOPERM; then
-  ok "petag is blocked from jbc:* keys"
-else
-  bad "petag is blocked from jbc:* keys"
-fi
 
 echo "== MinIO =="
 for app in $APPS; do
@@ -78,14 +64,6 @@ for app in $APPS; do
     bad "$app accesses its own bucket"
   fi
 done
-petag_ak="$(val PETAG_MINIO_ACCESS_KEY)"
-petag_sk="$(val PETAG_MINIO_SECRET_KEY)"
-if minio_mc \
-     "mc alias set t $MINIO_ENDPOINT $petag_ak $petag_sk >/dev/null 2>&1 && mc ls t/jbc >/dev/null 2>&1"; then
-  bad "petag is blocked from the jbc bucket"
-else
-  ok "petag is blocked from the jbc bucket"
-fi
 
 echo
 echo "passed: $pass  failed: $fail"

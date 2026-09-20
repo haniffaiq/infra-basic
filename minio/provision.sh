@@ -36,7 +36,6 @@ EOF
 }
 
 provision petag       "$PETAG_MINIO_ACCESS_KEY"       "$PETAG_MINIO_SECRET_KEY"
-provision jbc         "$JBC_MINIO_ACCESS_KEY"         "$JBC_MINIO_SECRET_KEY"
 provision photoboxtyb "$PHOTOBOXTYB_MINIO_ACCESS_KEY" "$PHOTOBOXTYB_MINIO_SECRET_KEY"
 provision postyb      "$POSTYB_MINIO_ACCESS_KEY"      "$POSTYB_MINIO_SECRET_KEY"
 provision osvyn       "$OSVYN_MINIO_ACCESS_KEY"       "$OSVYN_MINIO_SECRET_KEY"

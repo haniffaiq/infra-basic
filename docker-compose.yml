@@ -47,7 +47,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
       POSTGRES_DB: postgres
       PETAG_DB_PASSWORD: ${PETAG_DB_PASSWORD:?set in .env}
-      JBC_DB_PASSWORD: ${JBC_DB_PASSWORD:?set in .env}
       PHOTOBOXTYB_DB_PASSWORD: ${PHOTOBOXTYB_DB_PASSWORD:?set in .env}
       POSTYB_DB_PASSWORD: ${POSTYB_DB_PASSWORD:?set in .env}
       OSVYN_DB_PASSWORD: ${OSVYN_DB_PASSWORD:?set in .env}
@@ -69,7 +68,6 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set in .env}
       PETAG_REDIS_PASSWORD: ${PETAG_REDIS_PASSWORD:?set in .env}
-      JBC_REDIS_PASSWORD: ${JBC_REDIS_PASSWORD:?set in .env}
       PHOTOBOXTYB_REDIS_PASSWORD: ${PHOTOBOXTYB_REDIS_PASSWORD:?set in .env}
       POSTYB_REDIS_PASSWORD: ${POSTYB_REDIS_PASSWORD:?set in .env}
       OSVYN_REDIS_PASSWORD: ${OSVYN_REDIS_PASSWORD:?set in .env}
@@ -117,8 +115,6 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       PETAG_MINIO_ACCESS_KEY: ${PETAG_MINIO_ACCESS_KEY:?set in .env}
       PETAG_MINIO_SECRET_KEY: ${PETAG_MINIO_SECRET_KEY:?set in .env}
-      JBC_MINIO_ACCESS_KEY: ${JBC_MINIO_ACCESS_KEY:?set in .env}
-      JBC_MINIO_SECRET_KEY: ${JBC_MINIO_SECRET_KEY:?set in .env}
       PHOTOBOXTYB_MINIO_ACCESS_KEY: ${PHOTOBOXTYB_MINIO_ACCESS_KEY:?set in .env}
       PHOTOBOXTYB_MINIO_SECRET_KEY: ${PHOTOBOXTYB_MINIO_SECRET_KEY:?set in .env}
       POSTYB_MINIO_ACCESS_KEY: ${POSTYB_MINIO_ACCESS_KEY:?set in .env}
@@ -141,7 +137,7 @@ services:
       minio:
         condition: service_started
     environment:
-      BACKUP_APPS: ${BACKUP_APPS:-petag jbc photoboxtyb postyb osvyn}
+      BACKUP_APPS: ${BACKUP_APPS:-petag photoboxtyb postyb osvyn}
       POSTGRES_HOST: ${BACKUP_POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${BACKUP_POSTGRES_PORT:-5432}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

@@ -1,7 +1,7 @@
 # infa-basic
 
 Shared infrastructure starter: one **PostgreSQL**, one **Redis**, one **MinIO**,
-backing 4 apps on a single server — `petag`, `jbc`, `photoboxtyb`, `postyb`.
+backing 4 apps on a single server — `petag`, `photoboxtyb`, `postyb`, `osvyn`.
 
 Each app gets its own isolated database, Redis ACL user, and MinIO bucket.
 

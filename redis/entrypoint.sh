@@ -20,7 +20,6 @@ add_user() {
 }
 
 add_user petag       "$PETAG_REDIS_PASSWORD"
-add_user jbc         "$JBC_REDIS_PASSWORD"
 add_user photoboxtyb "$PHOTOBOXTYB_REDIS_PASSWORD"
 add_user postyb      "$POSTYB_REDIS_PASSWORD"
 add_user osvyn       "$OSVYN_REDIS_PASSWORD"
