@@ -50,6 +50,7 @@ services:
       PHOTOBOXTYB_DB_PASSWORD: ${PHOTOBOXTYB_DB_PASSWORD:?set in .env}
       POSTYB_DB_PASSWORD: ${POSTYB_DB_PASSWORD:?set in .env}
       OSVYN_DB_PASSWORD: ${OSVYN_DB_PASSWORD:?set in .env}
+      REPUBLIKAIN_DB_PASSWORD: ${REPUBLIKAIN_DB_PASSWORD:?set in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -71,6 +72,7 @@ services:
       PHOTOBOXTYB_REDIS_PASSWORD: ${PHOTOBOXTYB_REDIS_PASSWORD:?set in .env}
       POSTYB_REDIS_PASSWORD: ${POSTYB_REDIS_PASSWORD:?set in .env}
       OSVYN_REDIS_PASSWORD: ${OSVYN_REDIS_PASSWORD:?set in .env}
+      REPUBLIKAIN_REDIS_PASSWORD: ${REPUBLIKAIN_REDIS_PASSWORD:?set in .env}
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
     command: ["redis-server", "/etc/redis/redis.conf"]
     volumes:
@@ -121,6 +123,8 @@ services:
       POSTYB_MINIO_SECRET_KEY: ${POSTYB_MINIO_SECRET_KEY:?set in .env}
       OSVYN_MINIO_ACCESS_KEY: ${OSVYN_MINIO_ACCESS_KEY:?set in .env}
       OSVYN_MINIO_SECRET_KEY: ${OSVYN_MINIO_SECRET_KEY:?set in .env}
+      REPUBLIKAIN_MINIO_ACCESS_KEY: ${REPUBLIKAIN_MINIO_ACCESS_KEY:?set in .env}
+      REPUBLIKAIN_MINIO_SECRET_KEY: ${REPUBLIKAIN_MINIO_SECRET_KEY:?set in .env}
     entrypoint: ["/bin/sh", "/provision.sh"]
     volumes:
       - ./minio/provision.sh:/provision.sh:ro
@@ -137,7 +141,7 @@ services:
       minio:
         condition: service_started
     environment:
-      BACKUP_APPS: ${BACKUP_APPS:-petag photoboxtyb postyb osvyn}
+      BACKUP_APPS: ${BACKUP_APPS:-petag photoboxtyb postyb osvyn republikain}
       POSTGRES_HOST: ${BACKUP_POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${BACKUP_POSTGRES_PORT:-5432}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
